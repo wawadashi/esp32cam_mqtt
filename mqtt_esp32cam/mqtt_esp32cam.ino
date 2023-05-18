@@ -2,21 +2,17 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-// ------ 以下修改成你自己的WiFi帳號密碼 ------
+// ------ 以下修改成你自己的WiFi帐号密码 ------
 const char* ssid = "Dashi";
 const char* password = "0901236727";
 
-// ------ 以下修改成你MQTT設定 ------
-const char* mqtt_server = "broker.MQTTGO.io";//免註冊MQTT伺服器
+// ------ 以下修改成你MQTT设置 ------
+const char* mqtt_server = "broker.MQTTGO.io";  // 免注册MQTT服务器
 const unsigned int mqtt_port = 1883;
-#define MQTT_USER               "my_name"             //本案例未使用
-#define MQTT_PASSWORD           "my_password"         //本案例未使用
-#define MQTT_PUBLISH_Monitor    "mqtt/dashi/video"  // 放置Binary JPG Image的Topoc，記得要改成自己的
+const char* mqtt_topic_subscribe = "mqtt/iot/dashirec";  // 接收LED开关指令
+const char* mqtt_topic_publish = "mqtt/dashi/video";  // 放置Binary JPG Image的Topic，记得要改成自己的
 
-// -----閃光燈------
-int LED_BUILTIN = 4;
-
-// ------ OV2640相機設定 ------------
+// ------ 配置ESP32-CAM相机 ------
 #define CAMERA_MODEL_AI_THINKER
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
@@ -35,105 +31,103 @@ int LED_BUILTIN = 4;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-
- 
 char clientId[50];
 void mqtt_callback(char* topic, byte* payload, unsigned int msgLength);
 WiFiClient wifiClient;
 PubSubClient mqttClient(mqtt_server, mqtt_port, mqtt_callback, wifiClient);
 
-//啟動WIFI連線
+// ------ 配置闪光灯 ------
+const int ledPin = 4;
+
+// 初始化WiFi连接
 void setup_wifi() {
-  Serial.printf("\nConnecting to %s", ssid);
+  Serial.printf("Connecting to %s", ssid);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.print("\nWiFi Connected.  IP Address: ");
+  Serial.print("\nWiFi Connected. IP Address: ");
   Serial.println(WiFi.localIP());
 }
 
-
- 
-//MQTT callback，控制LED開關
+// MQTT回调，控制LED开关
 void mqtt_callback(char* topic, byte* payload, unsigned int msgLength) {
-  String command = "";
-  for (int i = 0; i < length; i++) {
-    command += (char)payload[i];
+  Serial.print("Received message on topic: ");
+  Serial.println(topic);
+
+  // 转换负载为字符串
+  String message = "";
+  for (int i = 0; i < msgLength; i++) {
+    message += (char)payload[i];
   }
-  
-  Serial.print("Received command: ");
-  Serial.println(command);
-  
-  if (command == "ON") {
+
+  Serial.print("Message received: ");
+  Serial.println(message);
+
+  // 根据收到的消息切换LED状态
+  if (message.equals("ON")) {
     digitalWrite(ledPin, HIGH);
-  } else if (command == "OFF") {
+    Serial.println("LED turned on");
+  } else if (message.equals("OFF")) {
     digitalWrite(ledPin, LOW);
+    Serial.println("LED turned off");
   }
 }
 
-
-//重新連線MQTT Server
-boolean mqtt_nonblock_reconnect() {
-  boolean doConn = false;
-  if (! mqttClient.connected()) {
-    boolean isConn = mqttClient.connect(clientId);
-    //boolean isConn = mqttClient.connect(clientId, MQTT_USER, MQTT_PASSWORD);
-    char logConnected[100];
-    sprintf(logConnected, "MQTT Client [%s] Connect %s !", clientId, (isConn ? "Successful" : "Failed"));
-    Serial.println(logConnected);
+// 重新连接MQTT服务器
+void mqtt_reconnect() {
+  while (!mqttClient.connected()) {
+    if (mqttClient.connect("ESP32CAM_Client")) {
+      Serial.println("Connected to MQTT server");
+      mqttClient.subscribe(mqtt_topic_subscribe);
+    } else {
+      Serial.print("Failed to connect to MQTT server, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" Retry in 5 seconds");
+      delay(5000);
+    }
   }
-  return doConn;
 }
 
-//MQTT傳遞照片
-void MQTT_picture() {
-  //camera_fb_t * fb;    // camera frame buffer.
-  camera_fb_t * fb = NULL;
+// MQTT传递照片
+void mqtt_publish_picture() {
+  camera_fb_t *fb = NULL;
   fb = esp_camera_fb_get();
   if (!fb) {
     delay(100);
-    Serial.println("Camera capture failed, Reset");
+    Serial.println("Camera capture failed. Resetting.");
     ESP.restart();
   }
 
-  char* logIsPublished;
-
-  if (! mqttClient.connected()) {
-    // client loses its connection
-    Serial.printf("MQTT Client [%s] Connection LOST !\n", clientId);
-    mqtt_nonblock_reconnect();
+  if (!mqttClient.connected()) {
+    Serial.println("No MQTT connection, photo not published!");
+    esp_camera_fb_return(fb);
+    return;
   }
 
-  if (! mqttClient.connected())
-    logIsPublished = "  No MQTT Connection, Photo NOT Published !";
-  else {
-    int imgSize = fb->len;
-    int ps = MQTT_MAX_PACKET_SIZE;
-    // start to publish the picture
-    mqttClient.beginPublish(MQTT_PUBLISH_Monitor, imgSize, false);
-    for (int i = 0; i < imgSize; i += ps) {
-      int s = (imgSize - i < s) ? (imgSize - i) : ps;
-      mqttClient.write((uint8_t *)(fb->buf) + i, s);
-    }
-
-
- 
-    boolean isPublished = mqttClient.endPublish();
-    if (isPublished)
-      logIsPublished = "  Publishing Photo to MQTT Successfully !";
-    else
-      logIsPublished = "  Publishing Photo to MQTT Failed !";
+  int imgSize = fb->len;
+  int ps = MQTT_MAX_PACKET_SIZE;
+  mqttClient.beginPublish(mqtt_topic_publish, imgSize, false);
+  for (int i = 0; i < imgSize; i += ps) {
+    int s = (imgSize - i < ps) ? (imgSize - i) : ps;
+    mqttClient.write((uint8_t *)(fb->buf) + i, s);
   }
-  Serial.println(logIsPublished);
- esp_camera_fb_return(fb);//清除緩衝區
+  boolean isPublished = mqttClient.endPublish();
+  if (isPublished) {
+    Serial.println("Publishing photo to MQTT successfully!");
+  } else {
+    Serial.println("Publishing photo to MQTT failed!");
+  }
+
+  esp_camera_fb_return(fb);
 }
-
 
 void setup() {
   Serial.begin(115200);
-  //相機設定
+  pinMode(ledPin, OUTPUT);
+
+  // 配置相机
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -155,24 +149,38 @@ void setup() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.jpeg_quality = 10;  //10-63 lower number means higher quality
+  config.jpeg_quality = 10;  // 10-63，数字越小质量越高
   config.fb_count = 2;
-  //設定照片品質
-  config.frame_size = FRAMESIZE_HQVGA ;// FRAMESIZE_ + UXGA|SXGA|XGA|SVGA|VGA|CIF|QVGA|HQVGA|QQVGA
+  config.frame_size = FRAMESIZE_HQVGA;  // FRAMESIZE_ + UXGA|SXGA|XGA|SVGA|VGA|CIF|QVGA|HQVGA|QQVGA
   esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera initialization failed with error 0x%x", err);
+    ESP.restart();
+  }
   delay(500);
-  //啟動WIFI連線
+
+  // 启动WiFi连接
   setup_wifi();
-  sprintf(clientId, "ESP32CAM_%04X", random(0xffff));  // Create a random client ID
-  //啟動MQTT連線
-  mqtt_nonblock_reconnect();  
+  sprintf(clientId, "ESP32CAM_%04X", random(0xffff));  // 创建一个随机的客户端ID
+
+  // 等待WiFi连接建立
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi Connected. IP Address: ");
+
+  // 启动MQTT连接
+  mqtt_reconnect();
+  // 订阅LED控制主题
+  mqttClient.subscribe(mqtt_topic_subscribe);
 }
 
-
- 
-
 void loop() {
-  mqtt_nonblock_reconnect(); 
-  MQTT_picture();//用MQTT傳照片
-  delay(100); //控制更新率
+  if (!mqttClient.connected()) {
+    mqtt_reconnect();
+  }
+  mqttClient.loop();
+  mqtt_publish_picture();  // 用MQTT传照片
+  delay(1000);  // 控制更新率
 }
