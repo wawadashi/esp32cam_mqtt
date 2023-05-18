@@ -1,19 +1,21 @@
 #include <esp_camera.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+
 // ------ 以下修改成你自己的WiFi帳號密碼 ------
-const char* ssid = "You";
-const char* password = "0933932774";
+const char* ssid = "Dashi";
+const char* password = "0901236727";
 
 // ------ 以下修改成你MQTT設定 ------
-const char* mqtt_server = "mqtt.eclipseprojects.io";//免註冊MQTT伺服器
+const char* mqtt_server = "broker.MQTTGO.io";//免註冊MQTT伺服器
 const unsigned int mqtt_port = 1883;
 #define MQTT_USER               "my_name"             //本案例未使用
 #define MQTT_PASSWORD           "my_password"         //本案例未使用
-#define MQTT_PUBLISH_Monitor    "yourTopic/esp32cam/pic"  // 放置Binary JPG Image的Topoc，記得要改成自己的
+#define MQTT_PUBLISH_Monitor    "mqtt/dashi/video"  // 放置Binary JPG Image的Topoc，記得要改成自己的
 
+// -----閃光燈------
+int LED_BUILTIN = 4;
 
- 
 // ------ OV2640相機設定 ------------
 #define CAMERA_MODEL_AI_THINKER
 #define PWDN_GPIO_NUM     32
@@ -54,10 +56,23 @@ void setup_wifi() {
 
 
  
-//MQTT callback，本案例沒使用
+//MQTT callback，控制LED開關
 void mqtt_callback(char* topic, byte* payload, unsigned int msgLength) {
-
+  String command = "";
+  for (int i = 0; i < length; i++) {
+    command += (char)payload[i];
+  }
+  
+  Serial.print("Received command: ");
+  Serial.println(command);
+  
+  if (command == "ON") {
+    digitalWrite(ledPin, HIGH);
+  } else if (command == "OFF") {
+    digitalWrite(ledPin, LOW);
+  }
 }
+
 
 //重新連線MQTT Server
 boolean mqtt_nonblock_reconnect() {
@@ -143,7 +158,7 @@ void setup() {
   config.jpeg_quality = 10;  //10-63 lower number means higher quality
   config.fb_count = 2;
   //設定照片品質
-  config.frame_size = FRAMESIZE_QVGA ;// FRAMESIZE_ + UXGA|SXGA|XGA|SVGA|VGA|CIF|QVGA|HQVGA|QQVGA
+  config.frame_size = FRAMESIZE_HQVGA ;// FRAMESIZE_ + UXGA|SXGA|XGA|SVGA|VGA|CIF|QVGA|HQVGA|QQVGA
   esp_err_t err = esp_camera_init(&config);
   delay(500);
   //啟動WIFI連線
@@ -159,5 +174,5 @@ void setup() {
 void loop() {
   mqtt_nonblock_reconnect(); 
   MQTT_picture();//用MQTT傳照片
-  delay(10000);
+  delay(100); //控制更新率
 }
