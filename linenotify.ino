@@ -159,8 +159,8 @@ void setup()
   pinMode(4, OUTPUT);
   digitalWrite(4, LOW); 
 
-  //傳送影像
-  Serial.println(sendCapturedImage2LineNotify(lineNotifyToken));
+  //傳送開始訊息
+   Serial.println(sendRequest2LineNotify(lineNotifyToken, "message=開始傳輸\n"));
 }
 
 void loop()
